@@ -1,0 +1,29 @@
+HopTrace 1.0.0 - build status
+==============================
+
+This archive contains Android Studio source code. It does NOT contain an APK.
+
+Why no APK was produced here:
+- Android SDK (including platform 37), Android NDK 28.2.13676358, and CMake 3.22.1 are not installed in this build environment.
+- No system Gradle installation is available.
+- The Gradle bootstrap download was attempted, but this environment could not resolve services.gradle.org (DNS/network unavailable).
+
+Checks completed locally:
+- Android XML resources and manifest parse successfully.
+- gradlew shell script passes bash -n.
+- Native C++ source passes host compiler syntax checking with JDK JNI headers.
+
+Not completed:
+- Android Gradle build / APK packaging.
+- Android Java compilation against Android/Material/MapLibre SDK dependencies.
+- Runtime test on a physical Android device or emulator.
+- End-to-end ICMP tests on Android.
+
+To build in Android Studio:
+1. Install JDK 17, Android SDK Platform 37, Build Tools 36.0.0, NDK 28.2.13676358, and CMake 3.22.1.
+2. Open this project folder and allow Gradle to download its dependencies.
+3. Run: ./gradlew assembleDebug
+4. APK output: app/build/outputs/apk/debug/app-debug.apk
+
+The app requires the user's own IPinfo City-level/Legacy Free token for city-level
+geolocation. The token is entered inside the app and is not embedded in this archive.

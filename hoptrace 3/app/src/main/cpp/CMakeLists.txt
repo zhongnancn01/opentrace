@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(hoptrace LANGUAGES CXX)
+add_library(hoptrace SHARED traceroute.cpp)
+find_library(log-lib log)
+target_link_libraries(hoptrace ${log-lib})
