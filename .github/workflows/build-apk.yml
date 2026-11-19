@@ -25,6 +25,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
@@ -39,24 +40,26 @@ jobs:
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-          # Android 17 is published as android-37.0. Some AGP tooling still
-          # resolves compileSdk 37 through the legacy android-37 directory.
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           if [ -z "$SDK_ROOT" ]; then
-            echo "Android SDK root was not provided by setup-android" >&2
+            echo "::error::Android SDK root was not provided by setup-android."
             exit 1
           fi
 
+          # The API 37 package is installed in android-37.0. Keep the
+          # android-37 alias for build tools that look up that directory.
           if [ -d "$SDK_ROOT/platforms/android-37.0" ] && \
              [ ! -e "$SDK_ROOT/platforms/android-37" ]; then
             ln -s android-37.0 "$SDK_ROOT/platforms/android-37"
           fi
 
-          test -s "$SDK_ROOT/platforms/android-37/android.jar"
-          echo "Android 17 SDK is ready at $SDK_ROOT/platforms/android-37"
+          if [ ! -s "$SDK_ROOT/platforms/android-37/android.jar" ]; then
+            echo "::error::Android API 37 platform is missing after SDK installation."
+            ls -la "$SDK_ROOT/platforms" || true
+            exit 1
+          fi
+          echo "Android API 37 SDK ready: $SDK_ROOT/platforms/android-37"
 
-      # This project ZIP does not include gradle-wrapper.jar. Install the
-      # exact Gradle version required by AGP 9.5.0 on the runner instead.
       - name: Install Gradle 9.6.0
         shell: bash
         run: |
@@ -69,25 +72,81 @@ jobs:
           unzip -q "$ZIP_PATH" -d "$RUNNER_TEMP"
           echo "$RUNNER_TEMP/gradle-${GRADLE_VERSION}/bin" >> "$GITHUB_PATH"
 
+      - name: Locate the Android Gradle project
+        id: locate-project
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The downloaded ZIP has a top-level "hoptrace/" directory.
+          # Users may upload either that directory itself or its contents.
+          # Find the actual Gradle root instead of assuming it is the repo root.
+          PROJECT_ROOTS=()
+          while IFS= read -r -d '' settings_file; do
+            candidate="$(dirname "$settings_file")"
+            if [ -f "$candidate/app/build.gradle" ] || \
+               [ -f "$candidate/app/build.gradle.kts" ]; then
+              PROJECT_ROOTS+=("$candidate")
+            fi
+          done < <(
+            find . -type f \
+              \( -name 'settings.gradle' -o -name 'settings.gradle.kts' \) \
+              -not -path '*/.git/*' \
+              -not -path '*/.gradle/*' \
+              -not -path '*/build/*' \
+              -print0 | sort -z
+          )
+
+          if [ "${#PROJECT_ROOTS[@]}" -eq 0 ]; then
+            echo "::error::Cannot find an Android Gradle project. Expected settings.gradle and app/build.gradle."
+            echo "Repository files (first 4 levels):"
+            find . -maxdepth 4 -type f \
+              -not -path './.git/*' \
+              -not -path '*/.gradle/*' | sort | head -200
+            exit 1
+          fi
+
+          if [ "${#PROJECT_ROOTS[@]}" -ne 1 ]; then
+            echo "::error::Found more than one Android Gradle project; refusing to guess. Candidates:"
+            printf ' - %s\n' "${PROJECT_ROOTS[@]}"
+            exit 1
+          fi
+
+          PROJECT_DIR="${PROJECT_ROOTS[0]}"
+          PROJECT_DIR="${PROJECT_DIR#./}"
+          if [ -z "$PROJECT_DIR" ]; then PROJECT_DIR="."; fi
+
+          echo "Detected Gradle project root: $PROJECT_DIR"
+          echo "Project root contents:"
+          ls -la "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "APK_PATH=$PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_ENV"
+
       - name: Build HopTrace debug APK
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --stacktrace --console=plain assembleDebug
+          echo "Building from: $PROJECT_DIR"
+          gradle --no-daemon --stacktrace --console=plain \
+            --project-dir "$PROJECT_DIR" assembleDebug
 
       - name: Verify APK output
         shell: bash
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          sha256sum "$APK"
-          ls -lh "$APK"
+          if [ ! -s "$APK_PATH" ]; then
+            echo "::error::Build finished but APK was not found at: $APK_PATH"
+            find "$PROJECT_DIR/app/build/outputs" -maxdepth 6 -type f -print 2>/dev/null || true
+            exit 1
+          fi
+          sha256sum "$APK_PATH"
+          ls -lh "$APK_PATH"
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
           name: HopTrace-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
