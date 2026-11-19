@@ -34,14 +34,29 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager --install \
-            "platforms;android-37" \
+            "platforms;android-37.0" \
             "build-tools;36.0.0" \
             "ndk;28.2.13676358" \
             "cmake;3.22.1"
 
-      # The source ZIP intentionally does not contain gradle-wrapper.jar.
-      # Download the exact Gradle version required by AGP 9.5.0 instead of
-      # invoking the incomplete ./gradlew script.
+          # Android 17 is published as android-37.0. Some AGP tooling still
+          # resolves compileSdk 37 through the legacy android-37 directory.
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          if [ -z "$SDK_ROOT" ]; then
+            echo "Android SDK root was not provided by setup-android" >&2
+            exit 1
+          fi
+
+          if [ -d "$SDK_ROOT/platforms/android-37.0" ] && \
+             [ ! -e "$SDK_ROOT/platforms/android-37" ]; then
+            ln -s android-37.0 "$SDK_ROOT/platforms/android-37"
+          fi
+
+          test -s "$SDK_ROOT/platforms/android-37/android.jar"
+          echo "Android 17 SDK is ready at $SDK_ROOT/platforms/android-37"
+
+      # This project ZIP does not include gradle-wrapper.jar. Install the
+      # exact Gradle version required by AGP 9.5.0 on the runner instead.
       - name: Install Gradle 9.6.0
         shell: bash
         run: |
